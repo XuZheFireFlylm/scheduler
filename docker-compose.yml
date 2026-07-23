@@ -1,0 +1,114 @@
+# Firefly Scheduler — Local Development Stack
+# Usage: docker compose up
+version: "3.9"
+
+services:
+  # ── PostgreSQL 15 ───────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: firefly-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: firefly_scheduler
+      POSTGRES_USER: firefly
+      POSTGRES_PASSWORD: changeme
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U firefly -d firefly_scheduler"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis 7 ────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: firefly-redis
+    restart: unless-stopped
+    command: redis-server --save "" --appendonly no
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── MinIO (S3) ────────────────────────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: firefly-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: firefly_admin
+      MINIO_ROOT_PASSWORD: changeme_minio_password
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"   # API
+      - "9001:9001"   # Console
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # ── MinIO init (bucket creation — runs once on startup) ───────────────────
+  minio-init:
+    image: minio/mc:latest
+    container_name: firefly-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set myminio http://minio:9000 firefly_admin changeme_minio_password;
+      mc mb myminio/task-packages --ignore-existing;
+      mc mb myminio/results --ignore-existing;
+      mc anonymous set download myminio/task-packages;
+      mc anonymous set download myminio/results;
+      echo 'MinIO buckets ready';
+      exit 0;
+      "
+
+  # ── Firefly Scheduler API ─────────────────────────────────────────────────
+  scheduler:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: firefly-scheduler
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+asyncpg://firefly:changeme@postgres:5432/firefly_scheduler
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: firefly_admin
+      MINIO_SECRET_KEY: changeme_minio_password
+      MINIO_BUCKET_PACKAGES: task-packages
+      MINIO_BUCKET_RESULTS: results
+      MINIO_SECURE: "false"
+      JWT_SECRET_KEY: CHANGE_ME_IN_PRODUCTION_USE_256_BIT_KEY
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRE_SECONDS: "86400"
+      DEBUG: "false"
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_data:
+  minio_data:
