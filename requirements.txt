@@ -1,0 +1,26 @@
+# ─── Firefly Scheduler ──────────────────────────────────────────────────────
+# 萤火虫大模型调度中心 · 依赖清单
+
+fastapi==0.115.*
+uvicorn[standard]==0.32.*
+pydantic==2.10.*
+pydantic-settings==2.7.*
+python-jose[cryptography]==3.3.*
+passlib[bcrypt]==1.7.*
+python-multipart==0.0.20
+
+# 数据库
+asyncpg==0.30.*
+sqlalchemy[asyncio]==2.0.*
+alembic==1.14.*
+
+# Redis
+redis==5.2.*
+
+# S3 / MinIO
+boto3==1.36.*
+aiobotocore==2.16.*
+
+# 工具
+python-dotenv==1.0.*
+httpx==0.28.*
